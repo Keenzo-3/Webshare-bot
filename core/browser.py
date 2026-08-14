@@ -77,8 +77,8 @@ def create_driver(proxy_str=None, scheme="http"):
     options.add_experimental_option("prefs", prefs)
     
     ext_dir = None
-    # FIX: only process proxy_str if it's not None and is a string
-    if proxy_str and isinstance(proxy_str, str):
+    # SAFE: only process if proxy_str is a non-empty string
+    if proxy_str and isinstance(proxy_str, str) and len(proxy_str) > 0:
         parts = proxy_str.split(":")
         if len(parts) == 4:
             ip, port, user, pwd = parts
@@ -87,38 +87,39 @@ def create_driver(proxy_str=None, scheme="http"):
         elif len(parts) == 2:
             options.add_argument(f"--proxy-server={scheme}://{proxy_str}")
     
-    # Use system Chromium and Chromedriver (no webdriver_manager)
+    # ========== USE SYSTEM CHROMIUM ==========
     chromium_binary = "/usr/bin/chromium"
     chromedriver_path = "/usr/bin/chromedriver"
     
+    # Verify existence, fallback if needed
     if not os.path.exists(chromium_binary):
-        # fallback to common paths
-        fallbacks = [
-            "/usr/bin/chromium-browser",
-            "/usr/bin/google-chrome-stable",
-            "/usr/bin/google-chrome"
-        ]
-        for fb in fallbacks:
-            if os.path.exists(fb):
-                chromium_binary = fb
-                break
-    
-    if os.path.exists(chromium_binary):
-        options.binary_location = chromium_binary
-    else:
-        raise Exception("Chromium/Chrome binary not found!")
-    
-    # Use chromedriver from system
-    if not os.path.exists(chromedriver_path):
-        # fallback: try to find chromedriver
-        possible = ["/usr/bin/chromedriver", "/usr/lib/chromium/chromedriver"]
-        for p in possible:
-            if os.path.exists(p):
-                chromedriver_path = p
-                break
+        # try common alternatives
+        alt = "/usr/bin/chromium-browser"
+        if os.path.exists(alt):
+            chromium_binary = alt
         else:
-            raise Exception("Chromedriver not found!")
+            # Last resort: try to find any chrome binary
+            for path in ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable"]:
+                if os.path.exists(path):
+                    chromium_binary = path
+                    break
+            else:
+                raise Exception("No Chromium/Chrome binary found in /usr/bin/")
     
+    if not os.path.exists(chromedriver_path):
+        alt = "/usr/lib/chromium/chromedriver"
+        if os.path.exists(alt):
+            chromedriver_path = alt
+        else:
+            # try to find chromedriver
+            for path in ["/usr/bin/chromedriver", "/usr/lib/chromium/chromedriver"]:
+                if os.path.exists(path):
+                    chromedriver_path = path
+                    break
+            else:
+                raise Exception("No chromedriver found")
+    
+    options.binary_location = chromium_binary
     service = Service(executable_path=chromedriver_path)
     driver = webdriver.Chrome(service=service, options=options)
     
