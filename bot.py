@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 Webshare.io Account Generator - Telegram Bot
+Fixed version with asyncio.to_thread, no sleep, no race conditions.
 """
 
 import os
 import sys
-import time
 import asyncio
 import threading
 from io import BytesIO
@@ -18,7 +18,6 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
-    MessageHandler,
     CallbackQueryHandler,
     ContextTypes,
     filters
@@ -32,13 +31,12 @@ from core.utils import (
     get_proxies,
     count_accounts,
     count_proxies,
-    format_large_number,
     log_message
 )
 
 from flask import Flask
 
-# ===== CONFIGURATION =====
+# ===== CONFIG =====
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = []
 
@@ -58,7 +56,7 @@ if not ADMIN_IDS:
     log_message("ADMIN_IDS not set!", "CRITICAL")
     sys.exit(1)
 
-# ===== FLASK APP =====
+# ===== FLASK HEALTH CHECK =====
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
@@ -78,7 +76,6 @@ def run_flask():
     flask_app.run(host='0.0.0.0', port=port, debug=False)
 
 # ===== BOT HANDLERS =====
-
 async def is_authorized(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
@@ -223,6 +220,75 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await query.edit_message_text(f"❌ {e}")
 
+async def run_auto_mode_async(count: int, update: Update):
+    """Async wrapper that runs blocking creation in a thread."""
+    msg = await update.message.reply_text(f"🚀 Creating {count} accounts...")
+    
+    results = await asyncio.to_thread(
+        _blocking_auto_creation,
+        count,
+        update.effective_user.id,
+        msg.message_id
+    )
+    
+    success = sum(1 for r in results if r["success"])
+    total_proxies = sum(r["proxies"] for r in results)
+    
+    await update.message.reply_text(
+        f"✅ Done!\n📧 `{success}/{count}` accounts\n🌐 `{total_proxies}` proxies",
+        parse_mode="Markdown"
+    )
+
+def _blocking_auto_creation(count, user_id, message_id):
+    """Synchronous blocking function called via asyncio.to_thread."""
+    from telegram import Bot
+    bot = Bot(token=BOT_TOKEN)
+    
+    results = []
+    for i in range(count):
+        email = unique_email()
+        password = generate_password()
+        try:
+            bot.edit_message_text(
+                chat_id=user_id,
+                message_id=message_id,
+                text=f"⏳ {i+1}/{count}...\n📧 `{email}`",
+                parse_mode="Markdown"
+            )
+        except:
+            pass
+        
+        result = create_webshare_account(email, password)
+        results.append(result)
+        status = "✅" if result["success"] else "❌"
+        detail = f"Proxies: {result['proxies']}" if result["success"] else result.get("error", "Failed")
+        
+        try:
+            bot.send_message(
+                chat_id=user_id,
+                text=f"{status} **{i+1}/{count}**\n📧 `{email}`\n🔑 `{password}`\n{detail}",
+                parse_mode="Markdown"
+            )
+        except:
+            pass
+        
+        if i < count - 1:
+            time.sleep(3)   # rate limit between accounts
+    
+    return results
+
+async def run_single_async(email, password, update, msg):
+    result = await asyncio.to_thread(create_webshare_account, email, password)
+    if result["success"]:
+        text = f"✅ **Done!**\n📧 `{email}`\n🔑 `{password}`\n🌐 Proxies: `{result['proxies']}`"
+    else:
+        text = f"❌ **Failed**\n📧 `{email}`\nError: `{result.get('error')}`"
+    
+    try:
+        await msg.edit_text(text, parse_mode="Markdown")
+    except:
+        pass
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_authorized(update.effective_user.id):
         return
@@ -245,14 +311,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         context.user_data.clear()
-        msg = await update.message.reply_text(f"🚀 Creating {count} accounts...")
-        
-        # RUN IN BACKGROUND THREAD WITH NEW EVENT LOOP
-        threading.Thread(
-            target=run_auto_mode,
-            args=(count, update.effective_user.id, msg.message_id),
-            daemon=True
-        ).start()
+        asyncio.create_task(run_auto_mode_async(count, update))
     
     elif mode == "manual":
         if ":" not in text:
@@ -268,107 +327,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         context.user_data.clear()
         msg = await update.message.reply_text(f"🔧 Creating...\n📧 `{email}`", parse_mode="Markdown")
-        
-        threading.Thread(
-            target=run_single_account,
-            args=(email, password, update.effective_user.id, msg.message_id),
-            daemon=True
-        ).start()
-
-def run_auto_mode(count, user_id, message_id):
-    """Background auto mode with OWN event loop"""
-    import telegram
-    import asyncio
-    
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    async def _run():
-        bot = telegram.Bot(token=BOT_TOKEN)
-        results = []
-        
-        for i in range(count):
-            email = unique_email()
-            password = generate_password()
-            
-            try:
-                await bot.edit_message_text(
-                    chat_id=user_id,
-                    message_id=message_id,
-                    text=f"⏳ {i+1}/{count}...\n📧 `{email}`",
-                    parse_mode="Markdown"
-                )
-            except:
-                pass
-            
-            result = create_webshare_account(email, password)
-            results.append(result)
-            
-            status = "✅" if result["success"] else "❌"
-            detail = f"Proxies: {result['proxies']}" if result["success"] else result.get("error", "Failed")
-            
-            try:
-                await bot.send_message(
-                    chat_id=user_id,
-                    text=f"{status} **{i+1}/{count}**\n📧 `{email}`\n🔑 `{password}`\n{detail}",
-                    parse_mode="Markdown"
-                )
-            except:
-                pass
-            
-            if i < count - 1:
-                time.sleep(3)
-        
-        success = sum(1 for r in results if r["success"])
-        total_proxies = sum(r["proxies"] for r in results)
-        
-        try:
-            await bot.edit_message_text(
-                chat_id=user_id,
-                message_id=message_id,
-                text=f"✅ Done!\n📧 `{success}/{count}` accounts\n🌐 `{total_proxies}` proxies",
-                parse_mode="Markdown"
-            )
-        except:
-            pass
-    
-    loop.run_until_complete(_run())
-    loop.close()
-
-def run_single_account(email, password, user_id, message_id):
-    """Background single account with OWN event loop"""
-    import telegram
-    import asyncio
-    
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    async def _run():
-        bot = telegram.Bot(token=BOT_TOKEN)
-        result = create_webshare_account(email, password)
-        
-        if result["success"]:
-            text = f"✅ **Done!**\n📧 `{email}`\n🔑 `{password}`\n🌐 Proxies: `{result['proxies']}`"
-        else:
-            text = f"❌ **Failed**\n📧 `{email}`\nError: `{result.get('error')}`"
-        
-        try:
-            await bot.edit_message_text(
-                chat_id=user_id,
-                message_id=message_id,
-                text=text,
-                parse_mode="Markdown"
-            )
-        except:
-            pass
-    
-    loop.run_until_complete(_run())
-    loop.close()
+        asyncio.create_task(run_single_async(email, password, update, msg))
 
 # ===== MAIN =====
 def main():
     os.makedirs("data", exist_ok=True)
-    log_message("Starting Webshare Bot...")
+    log_message("Starting Webshare Bot (fixed)...")
     
     app = Application.builder().token(BOT_TOKEN).build()
     
