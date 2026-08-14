@@ -5,12 +5,9 @@ import tempfile
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-from webdriver_manager.core.os_manager import ChromeType
 from .utils import rand_str, log_message
 
 def create_proxy_extension(ip, port, username, password, scheme):
-    """Create Chrome extension for proxy authentication (MV3)."""
     ext_dir = os.path.join(tempfile.gettempdir(), f"proxy_ext_{rand_str(8)}")
     os.makedirs(ext_dir, exist_ok=True)
     
@@ -18,16 +15,9 @@ def create_proxy_extension(ip, port, username, password, scheme):
         "version": "1.0.0",
         "manifest_version": 3,
         "name": "ProxyAuth",
-        "permissions": [
-            "proxy",
-            "webRequest",
-            "webRequestAuthProvider",
-            "storage"
-        ],
+        "permissions": ["proxy", "webRequest", "webRequestAuthProvider", "storage"],
         "host_permissions": ["<all_urls>"],
-        "background": {
-            "service_worker": "background.js"
-        }
+        "background": {"service_worker": "background.js"}
     }
     with open(os.path.join(ext_dir, "manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2)
@@ -43,20 +33,10 @@ const proxyConfig = {{
         }}
     }}
 }};
-
-chrome.proxy.settings.set(
-    {{value: proxyConfig, scope: "regular"}},
-    function() {{}}
-);
-
+chrome.proxy.settings.set({{value: proxyConfig, scope: "regular"}}, function() {{}});
 chrome.webRequest.onAuthRequired.addListener(
     function(details) {{
-        return {{
-            authCredentials: {{
-                username: "{username}",
-                password: "{password}"
-            }}
-        }};
+        return {{authCredentials: {{username: "{username}", password: "{password}"}}}};
     }},
     {{urls: ["<all_urls>"]}},
     ["blocking"]
@@ -64,11 +44,9 @@ chrome.webRequest.onAuthRequired.addListener(
 """
     with open(os.path.join(ext_dir, "background.js"), "w") as f:
         f.write(background_js)
-    
     return ext_dir
 
 def create_driver(proxy_str=None, scheme="http"):
-    """Create Chrome driver with anti‑detection and proxy support."""
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
@@ -109,33 +87,47 @@ def create_driver(proxy_str=None, scheme="http"):
         elif len(parts) == 2:
             options.add_argument(f"--proxy-server={scheme}://{proxy_str}")
     
-    try:
-        # Check common Chrome/Chromium paths for cloud environments
-        chrome_paths = [
-            "/usr/bin/chromium",               # <-- added for Debian-based systems
+    # Use system Chromium and Chromedriver (no webdriver_manager)
+    chromium_binary = "/usr/bin/chromium"
+    chromedriver_path = "/usr/bin/chromedriver"
+    
+    if not os.path.exists(chromium_binary):
+        # fallback to common paths
+        fallbacks = [
             "/usr/bin/chromium-browser",
-            "/usr/bin/google-chrome",
             "/usr/bin/google-chrome-stable",
-            "/opt/render/project/.render/chrome/opt/google/chrome/chrome",
-            "/app/.chrome-for-testing/chrome-linux64/chrome"
+            "/usr/bin/google-chrome"
         ]
-        for path in chrome_paths:
-            if os.path.exists(path):
-                options.binary_location = path
+        for fb in fallbacks:
+            if os.path.exists(fb):
+                chromium_binary = fb
                 break
-        
-        service = Service(ChromeDriverManager(chrome_type=ChromeType.GOOGLE).install())
-        driver = webdriver.Chrome(service=service, options=options)
-        
-        # Stealth scripts
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        driver.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
-        driver.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']})")
-        
-        return driver, ext_dir
-    except Exception as e:
-        log_message(f"Driver creation failed: {e}", "ERROR")
-        raise
+    
+    if os.path.exists(chromium_binary):
+        options.binary_location = chromium_binary
+    else:
+        raise Exception("Chromium/Chrome binary not found!")
+    
+    # Use chromedriver from system
+    if not os.path.exists(chromedriver_path):
+        # fallback: try to find chromedriver
+        possible = ["/usr/bin/chromedriver", "/usr/lib/chromium/chromedriver"]
+        for p in possible:
+            if os.path.exists(p):
+                chromedriver_path = p
+                break
+        else:
+            raise Exception("Chromedriver not found!")
+    
+    service = Service(executable_path=chromedriver_path)
+    driver = webdriver.Chrome(service=service, options=options)
+    
+    # Stealth
+    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    driver.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
+    driver.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']})")
+    
+    return driver, ext_dir
 
 def cleanup_driver(driver=None, ext_dir=None):
     try:

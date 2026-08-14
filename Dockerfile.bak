@@ -1,7 +1,11 @@
 FROM python:3.10-slim
 
-# Install Chromium and Chromedriver directly from Debian
+# Install system dependencies + Chromium (no Google repo, no apt-key)
 RUN apt-get update && apt-get install -y \
+    wget \
+    unzip \
+    curl \
+    gnupg \
     chromium \
     chromium-driver \
     && rm -rf /var/lib/apt/lists/*
