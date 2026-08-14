@@ -99,7 +99,8 @@ def create_driver(proxy_str=None, scheme="http"):
     options.add_experimental_option("prefs", prefs)
     
     ext_dir = None
-    if proxy_str:
+    # FIX: only process proxy_str if it's not None and is a string
+    if proxy_str and isinstance(proxy_str, str):
         parts = proxy_str.split(":")
         if len(parts) == 4:
             ip, port, user, pwd = parts
