@@ -110,11 +110,12 @@ def create_driver(proxy_str=None, scheme="http"):
             options.add_argument(f"--proxy-server={scheme}://{proxy_str}")
     
     try:
-        # Check common Chrome paths for cloud environments
+        # Check common Chrome/Chromium paths for cloud environments
         chrome_paths = [
-            "/usr/bin/google-chrome",
+            "/usr/bin/chromium",               # <-- added for Debian-based systems
             "/usr/bin/chromium-browser",
-            "/usr/bin/chromium",
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
             "/opt/render/project/.render/chrome/opt/google/chrome/chrome",
             "/app/.chrome-for-testing/chrome-linux64/chrome"
         ]
