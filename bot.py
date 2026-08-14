@@ -8,6 +8,7 @@ import os
 import sys
 import asyncio
 import threading
+import time
 from io import BytesIO
 from datetime import datetime
 
@@ -20,7 +21,8 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
-    filters
+    filters,
+    MessageHandler          # <-- FIXED: added missing import
 )
 
 from core.account import create_webshare_account
@@ -343,6 +345,7 @@ def main():
     app.add_handler(CommandHandler("clear", clear_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CallbackQueryHandler(button_handler))
+    # FIXED: handler name is now handle_message (with an 'e')
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     log_message(f"Bot running with {len(ADMIN_IDS)} admin(s)")
